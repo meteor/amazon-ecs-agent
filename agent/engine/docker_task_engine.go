@@ -17,6 +17,8 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,6 +37,7 @@ import (
 	utilsync "github.com/aws/amazon-ecs-agent/agent/utils/sync"
 	"github.com/aws/amazon-ecs-agent/agent/utils/ttime"
 	"github.com/cihub/seelog"
+	docker "github.com/fsouza/go-dockerclient"
 )
 
 const (
@@ -569,6 +572,10 @@ func (engine *DockerTaskEngine) createContainer(task *api.Task, container *api.C
 		return DockerContainerMetadata{Error: api.NamedError(err)}
 	}
 
+	if err := setCPUQuotaAndPeriod(config, hostConfig); err != nil {
+		return DockerContainerMetadata{Error: api.NamedError(err)}
+	}
+
 	// Augment labels with some metadata from the agent. Explicitly do this last
 	// such that it will always override duplicates in the provided raw config
 	// data.
@@ -833,4 +840,68 @@ func (engine *DockerTaskEngine) isParallelPullCompatible() bool {
 	}
 
 	return false
+}
+
+func getNumberFromLabelOrEnvVar(config *docker.Config, out *int64, label, envVar string) api.NamedError {
+	found := false
+	if str, found := config.Labels[label]; found {
+		parsed, err := strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			return &api.DefaultNamedError{Err: err.Error(), Name: "GalaxyConfigError"}
+		}
+		*out = parsed
+		found = true
+	}
+
+	// Fall back to environment search, and remove the env var from the
+	// environment no matter what.
+	newEnv := make([]string, 0, len(config.Env))
+	prefix := envVar + "="
+	for _, envLine := range config.Env {
+		if strings.HasPrefix(envLine, prefix) {
+			// Don't override label with env var. (But still keep scanning so we can
+			// remove the env var from the container.)
+			if !found {
+				str := strings.TrimPrefix(envLine, prefix)
+				parsed, err := strconv.ParseInt(str, 10, 64)
+				if err != nil {
+					return &api.DefaultNamedError{Err: err.Error(), Name: "GalaxyConfigError"}
+				}
+				*out = parsed
+			}
+			found = true
+		} else {
+			newEnv = append(newEnv, envLine)
+		}
+	}
+
+	// Update the environment with the one that doesn't have the legacy magic
+	// value.
+	config.Env = newEnv
+
+	// Just leave *out at its default value.
+	return nil
+}
+
+func setCPUQuotaAndPeriod(config *docker.Config, hostConfig *docker.HostConfig) api.NamedError {
+	// ECS doesn't natively support setting CPU quota or period, so we pass them
+	// in via container labels. Also, ECS didn't always support setting container
+	// labels, so for backwards compatibility with old schedulers/task
+	// definitions, we also support reading the values from environment variables.
+	hostConfig.CPUPeriod = 100000 // 100ms, default value
+	hostConfig.CPUQuota = -1      // default value to not set a quota
+
+	if err := getNumberFromLabelOrEnvVar(
+		config, &hostConfig.CPUPeriod,
+		"com.meteor.galaxy.cpu-period", "_DOCKER_CPU_PERIOD"); err != nil {
+		return err
+	}
+
+	if err := getNumberFromLabelOrEnvVar(
+		config, &hostConfig.CPUQuota,
+		"com.meteor.galaxy.cpu-quota", "_DOCKER_CPU_QUOTA"); err != nil {
+		return err
+	}
+
+	return nil
 }
