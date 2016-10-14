@@ -270,6 +270,11 @@ func _main() int {
 	// Start metrics session in a go routine
 	go tcshandler.StartMetricsSession(telemetrySessionParams)
 
+	if err := sdNotify("READY=1"); err != nil && err != sdNotifyNoSocket {
+		log.Criticalf("error notifying systemd that we are ready: %v", err)
+		return exitcodes.ExitError
+	}
+
 	log.Info("Beginning Polling for updates")
 	err = acshandler.StartSession(ctx, acshandler.StartSessionArguments{
 		AcceptInvalidCert: *acceptInsecureCert,
