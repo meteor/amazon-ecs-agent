@@ -187,6 +187,11 @@ func (agent *ecsAgent) doStart(containerChangeEventStream *eventstream.EventStre
 	agent.startAsyncRoutines(containerChangeEventStream, credentialsManager, imageManager,
 		taskEngine, stateManager, deregisterInstanceEventStream, client, taskHandler)
 
+	if err := sdNotify("READY=1"); err != nil && err != sdNotifyNoSocket {
+		log.Criticalf("error notifying systemd that we are ready: %v", err)
+		return exitcodes.ExitError
+	}
+
 	// Start the acs session, which should block doStart
 	return agent.startACSSession(credentialsManager, taskEngine, stateManager,
 		deregisterInstanceEventStream, client, taskHandler)
