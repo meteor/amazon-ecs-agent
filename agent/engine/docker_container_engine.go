@@ -123,7 +123,11 @@ type DockerClient interface {
 
 	// StopContainer stops the container identified by the name provided. A timeout value should be provided for the
 	// request.
-	StopContainer(string, time.Duration) DockerContainerMetadata
+	//
+	// The first duration is the amount of time to wait after docker stop's own
+	// timeout.  The second duration, if nonzero, overrides the default configured
+	// docker stop timeout.
+	StopContainer(string, time.Duration, time.Duration) DockerContainerMetadata
 
 	// DescribeContainer returns status information about the specified container.
 	DescribeContainer(string) (api.ContainerStatus, DockerContainerMetadata)
@@ -608,8 +612,12 @@ func (dg *dockerGoClient) inspectContainer(dockerID string, ctx context.Context)
 	return client.InspectContainerWithContext(dockerID, ctx)
 }
 
-func (dg *dockerGoClient) StopContainer(dockerID string, timeout time.Duration) DockerContainerMetadata {
-	timeout = timeout + dg.config.DockerStopTimeout
+func (dg *dockerGoClient) StopContainer(dockerID string, timeout time.Duration, dockerStopTimeoutOverride time.Duration) DockerContainerMetadata {
+	dockerStopTimeout := dg.config.DockerStopTimeout
+	if dockerStopTimeoutOverride != 0 {
+		dockerStopTimeout = dockerStopTimeoutOverride
+	}
+	timeout = timeout + dockerStopTimeout
 
 	// Create a context that times out after the 'timeout' duration
 	// This is defined by the const 'stopContainerTimeout' and the
@@ -623,7 +631,7 @@ func (dg *dockerGoClient) StopContainer(dockerID string, timeout time.Duration) 
 	// Buffered channel so in the case of timeout it takes one write, never gets
 	// read, and can still be GC'd
 	response := make(chan DockerContainerMetadata, 1)
-	go func() { response <- dg.stopContainer(ctx, dockerID) }()
+	go func() { response <- dg.stopContainer(ctx, dockerID, dockerStopTimeout) }()
 	select {
 	case resp := <-response:
 		return resp
@@ -638,13 +646,13 @@ func (dg *dockerGoClient) StopContainer(dockerID string, timeout time.Duration) 
 	}
 }
 
-func (dg *dockerGoClient) stopContainer(ctx context.Context, dockerID string) DockerContainerMetadata {
+func (dg *dockerGoClient) stopContainer(ctx context.Context, dockerID string, dockerStopTimeout time.Duration) DockerContainerMetadata {
 	client, err := dg.dockerClient()
 	if err != nil {
 		return DockerContainerMetadata{Error: CannotGetDockerClientError{version: dg.version, err: err}}
 	}
 
-	err = client.StopContainerWithContext(dockerID, uint(dg.config.DockerStopTimeout/time.Second), ctx)
+	err = client.StopContainerWithContext(dockerID, uint(dockerStopTimeout/time.Second), ctx)
 	metadata := dg.containerMetadata(dockerID)
 	if err != nil {
 		log.Debug("Error stopping container", "err", err, "id", dockerID)

@@ -36,6 +36,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/utils/ttime"
 
 	"github.com/cihub/seelog"
+	docker "github.com/fsouza/go-dockerclient"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -707,6 +708,10 @@ func (engine *DockerTaskEngine) createContainer(task *api.Task, container *api.C
 		return DockerContainerMetadata{Error: api.NamedError(err)}
 	}
 
+	if err := setCPUQuotaAndPeriod(config, hostConfig); err != nil {
+		return DockerContainerMetadata{Error: api.NamedError(err)}
+	}
+
 	// Augment labels with some metadata from the agent. Explicitly do this last
 	// such that it will always override duplicates in the provided raw config
 	// data.
@@ -880,6 +885,11 @@ func (engine *DockerTaskEngine) buildCNIConfigFromTaskContainer(task *api.Task, 
 
 func (engine *DockerTaskEngine) stopContainer(task *api.Task, container *api.Container) DockerContainerMetadata {
 	seelog.Infof("Stopping container, container: %s, task: %s", container.String(), task.String())
+	client := engine.client
+	if container.DockerConfig.Version != nil {
+		client = client.WithVersion(dockerclient.DockerVersion(*container.DockerConfig.Version))
+	}
+
 	containerMap, ok := engine.state.ContainerMapByArn(task.Arn)
 	if !ok {
 		return DockerContainerMetadata{
@@ -903,7 +913,27 @@ func (engine *DockerTaskEngine) stopContainer(task *api.Task, container *api.Con
 		seelog.Infof("Cleaned pause container network namespace, task: %s", task.String())
 	}
 
-	return engine.client.StopContainer(dockerContainer.DockerID, stopContainerTimeout)
+	dockerClientVersion, versionErr := client.APIVersion()
+	if versionErr != nil {
+		return DockerContainerMetadata{Error: CannotGetDockerClientVersionError{versionErr}}
+	}
+
+	config, err := task.DockerConfig(container, dockerClientVersion)
+	if err != nil {
+		return DockerContainerMetadata{Error: api.NamedError(err)}
+	}
+	var dockerStopTimeoutOverride time.Duration
+	{
+		var overrideSecs int64
+		if err := getNumberFromLabel(config, &overrideSecs, "com.meteor.galaxy.docker-stop-timeout-seconds"); err != nil {
+			return DockerContainerMetadata{Error: err}
+		}
+		dockerStopTimeoutOverride = time.Duration(overrideSecs) * time.Second
+	}
+
+	// Note: the stopContainerTimeout here is *added* to the timeout passed to
+	// docker stop itself!
+	return engine.client.StopContainer(dockerContainer.DockerID, stopContainerTimeout, dockerStopTimeoutOverride)
 }
 
 func (engine *DockerTaskEngine) removeContainer(task *api.Task, container *api.Container) error {
@@ -1025,6 +1055,41 @@ func (engine *DockerTaskEngine) isParallelPullCompatible() bool {
 	}
 
 	return false
+}
+
+func getNumberFromLabel(config *docker.Config, out *int64, label string) api.NamedError {
+	if str, found := config.Labels[label]; found {
+		parsed, err := strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			return &api.DefaultNamedError{Err: err.Error(), Name: "GalaxyConfigError"}
+		}
+		*out = parsed
+		return nil
+	}
+
+	// Just leave *out at its default value.
+	return nil
+}
+
+func setCPUQuotaAndPeriod(config *docker.Config, hostConfig *docker.HostConfig) api.NamedError {
+	// ECS doesn't natively support setting CPU quota or period, so we pass them
+	// in via container labels. Also, ECS didn't always support setting container
+	// labels, so for backwards compatibility with old schedulers/task
+	// definitions, we also support reading the values from environment variables.
+	hostConfig.CPUPeriod = 100000 // 100ms, default value
+	hostConfig.CPUQuota = -1      // default value to not set a quota
+
+	if err := getNumberFromLabel(
+		config, &hostConfig.CPUPeriod, "com.meteor.galaxy.cpu-period"); err != nil {
+		return err
+	}
+
+	if err := getNumberFromLabel(
+		config, &hostConfig.CPUQuota, "com.meteor.galaxy.cpu-quota"); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (engine *DockerTaskEngine) updateMetadataFile(task *api.Task, cont *api.DockerContainer) {
