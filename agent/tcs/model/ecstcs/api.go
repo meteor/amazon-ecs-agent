@@ -168,7 +168,7 @@ type PublishMetricsRequest struct {
 
 	TaskMetrics []*TaskMetric `locationName:"taskMetrics" type:"list"`
 
-	Timestamp *time.Time `locationName:"timestamp" type:"timestamp" timestampFormat:"unix"`
+	Timestamp *time.Time `locationName:"timestamp" type:"timestamp" timestampFormat:"unixTimestamp"`
 }
 
 // String returns the string representation
