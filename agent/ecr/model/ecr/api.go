@@ -101,7 +101,7 @@ type AuthorizationData struct {
 
 	AuthorizationToken *string `locationName:"authorizationToken" type:"string"`
 
-	ExpiresAt *time.Time `locationName:"expiresAt" type:"timestamp" timestampFormat:"unix"`
+	ExpiresAt *time.Time `locationName:"expiresAt" type:"timestamp" timestampFormat:"unixTimestamp"`
 
 	ProxyEndpoint *string `locationName:"proxyEndpoint" type:"string"`
 }
