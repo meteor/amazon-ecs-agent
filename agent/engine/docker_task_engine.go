@@ -53,8 +53,6 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/utils/ttime"
 	dockercontainer "github.com/docker/docker/api/types/container"
 
-	docker "github.com/fsouza/go-dockerclient"
-
 	"github.com/cihub/seelog"
 	"github.com/docker/docker/api/types"
 	"github.com/pkg/errors"
@@ -1001,7 +999,7 @@ func (engine *DockerTaskEngine) pullAndUpdateContainerReference(task *apitask.Ta
 	engine.updateContainerReference(pullSucceeded, container, task.Arn)
 	return metadata
 }
-func getNumberFromLabel(config *docker.Config, out *int64, label string) api.NamedError {
+func getNumberFromLabel(config *dockercontainer.Config, out *int64, label string) api.NamedError {
 	if str, found := config.Labels[label]; found {
 		parsed, err := strconv.ParseInt(str, 10, 64)
 		if err != nil {
@@ -1015,7 +1013,7 @@ func getNumberFromLabel(config *docker.Config, out *int64, label string) api.Nam
 	return nil
 }
 
-func setCPUQuotaAndPeriod(config *docker.Config, hostConfig *docker.HostConfig) api.NamedError {
+func setCPUQuotaAndPeriod(config *dockercontainer.Config, hostConfig *dockercontainer.HostConfig) api.NamedError {
 	// ECS doesn't natively support setting CPU quota or period, so we pass them
 	// in via container labels. Also, ECS didn't always support setting container
 	// labels, so for backwards compatibility with old schedulers/task
