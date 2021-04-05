@@ -999,11 +999,11 @@ func (engine *DockerTaskEngine) pullAndUpdateContainerReference(task *apitask.Ta
 	engine.updateContainerReference(pullSucceeded, container, task.Arn)
 	return metadata
 }
-func getNumberFromLabel(config *dockercontainer.Config, out *int64, label string) dockerapi.NamedError {
+func getNumberFromLabel(config *dockercontainer.Config, out *int64, label string) apierrors.NamedError {
 	if str, found := config.Labels[label]; found {
 		parsed, err := strconv.ParseInt(str, 10, 64)
 		if err != nil {
-			return &dockerapi.DefaultNamedError{Err: err.Error(), Name: "GalaxyConfigError"}
+			return &apierrors.DefaultNamedError{Err: err.Error(), Name: "GalaxyConfigError"}
 		}
 		*out = parsed
 		return nil
@@ -1013,7 +1013,7 @@ func getNumberFromLabel(config *dockercontainer.Config, out *int64, label string
 	return nil
 }
 
-func setCPUQuotaAndPeriod(config *dockercontainer.Config, hostConfig *dockercontainer.HostConfig) dockerapi.NamedError {
+func setCPUQuotaAndPeriod(config *dockercontainer.Config, hostConfig *dockercontainer.HostConfig) apierrors.NamedError {
 	// ECS doesn't natively support setting CPU quota or period, so we pass them
 	// in via container labels. Also, ECS didn't always support setting container
 	// labels, so for backwards compatibility with old schedulers/task
@@ -1271,7 +1271,7 @@ func (engine *DockerTaskEngine) createContainer(task *apitask.Task, container *a
 	}
 
 	if err := setCPUQuotaAndPeriod(config, hostConfig); err != nil {
-		return dockerapi.DockerContainerMetadata{Error: dockerapi.NamedError(err)}
+		return dockerapi.DockerContainerMetadata{Error: apierrors.NamedError(err)}
 	}
 
 	createContainerBegin := time.Now()
