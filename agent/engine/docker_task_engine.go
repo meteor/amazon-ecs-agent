@@ -53,6 +53,8 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/utils/ttime"
 	dockercontainer "github.com/docker/docker/api/types/container"
 
+	docker "github.com/fsouza/go-dockerclient"
+
 	"github.com/cihub/seelog"
 	"github.com/docker/docker/api/types"
 	"github.com/pkg/errors"
