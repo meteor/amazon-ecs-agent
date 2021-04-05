@@ -999,6 +999,40 @@ func (engine *DockerTaskEngine) pullAndUpdateContainerReference(task *apitask.Ta
 	engine.updateContainerReference(pullSucceeded, container, task.Arn)
 	return metadata
 }
+func getNumberFromLabel(config *docker.Config, out *int64, label string) api.NamedError {
+	if str, found := config.Labels[label]; found {
+		parsed, err := strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			return &api.DefaultNamedError{Err: err.Error(), Name: "GalaxyConfigError"}
+		}
+		*out = parsed
+		return nil
+	}
+
+	// Just leave *out at its default value.
+	return nil
+}
+
+func setCPUQuotaAndPeriod(config *docker.Config, hostConfig *docker.HostConfig) api.NamedError {
+	// ECS doesn't natively support setting CPU quota or period, so we pass them
+	// in via container labels. Also, ECS didn't always support setting container
+	// labels, so for backwards compatibility with old schedulers/task
+	// definitions, we also support reading the values from environment variables.
+	hostConfig.CPUPeriod = 100000 // 100ms, default value
+	hostConfig.CPUQuota = -1      // default value to not set a quota
+
+	if err := getNumberFromLabel(
+		config, &hostConfig.CPUPeriod, "com.meteor.galaxy.cpu-period"); err != nil {
+		return err
+	}
+
+	if err := getNumberFromLabel(
+		config, &hostConfig.CPUQuota, "com.meteor.galaxy.cpu-quota"); err != nil {
+		return err
+	}
+
+	return nil
+}
 
 func (engine *DockerTaskEngine) updateContainerReference(pullSucceeded bool, container *apicontainer.Container, taskArn string) {
 	err := engine.imageManager.RecordContainerReference(container)
@@ -1234,6 +1268,10 @@ func (engine *DockerTaskEngine) createContainer(task *apitask.Task, container *a
 			seelog.Warnf("Task engine [%s]: unable to create metadata for container %s: %v",
 				task.Arn, container.Name, mderr)
 		}
+	}
+
+	if err := setCPUQuotaAndPeriod(config, hostConfig); err != nil {
+		return DockerContainerMetadata{Error: api.NamedError(err)}
 	}
 
 	createContainerBegin := time.Now()
